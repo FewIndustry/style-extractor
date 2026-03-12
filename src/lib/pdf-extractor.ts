@@ -1,11 +1,9 @@
 import * as pdfjsLib from 'pdfjs-dist'
 import type { RawExtractionData, RawColorData, RawFontData } from '@extractor/types'
 
-// Use the bundled worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.mjs',
-  import.meta.url
-).toString()
+// Use the bundled worker — import directly so Vite can resolve it
+import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
 /**
  * Extract design-relevant data from a PDF file.
@@ -27,8 +25,10 @@ export async function extractPdf(file: File): Promise<RawExtractionData> {
 
     // --- Extract text content for fonts ---
     const textContent = await page.getTextContent()
-    for (const item of textContent.items) {
-      if (!('str' in item) || !item.str.trim()) continue
+    const items = textContent.items ?? []
+    for (let idx = 0; idx < items.length; idx++) {
+      const item = items[idx]
+      if (!item || !('str' in item) || !item.str.trim()) continue
 
       const fontName = item.fontName || 'unknown'
       // Height approximates font size in PDF points
