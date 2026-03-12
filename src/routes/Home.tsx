@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Palette, Type, Ruler, Sparkles, Code2, LogIn, Wand2 } from 'lucide-react'
+import { Palette, Type, Ruler, Sparkles, Code2, LogIn, Wand2, Sun, Moon } from 'lucide-react'
 import { UrlInput } from '@/components/input/UrlInput'
 import { PdfUpload } from '@/components/input/PdfUpload'
 import { ColorPalette } from '@/components/results/ColorPalette'
@@ -13,6 +13,7 @@ import { AuthModal } from '@/components/auth/AuthModal'
 import { UserMenu } from '@/components/auth/UserMenu'
 import { useExtraction } from '@/hooks/useExtraction'
 import { useAuth } from '@/hooks/useAuth'
+import { useTheme } from '@/hooks/useTheme'
 
 type InputMode = 'url' | 'pdf'
 type ResultTab = 'colors' | 'typography' | 'spacing' | 'effects' | 'export'
@@ -23,9 +24,10 @@ export function Home() {
   const [activeTab, setActiveTab] = useState<ResultTab>('colors')
   const [showAuth, setShowAuth] = useState(false)
   const {
-    status, tokens, error, layers, cached, refining,
+    status, tokens, error, layers, cached, refining, stage,
     extractFromUrl, extractFromPdf, refineWithAI, reset
   } = useExtraction()
+  const { theme, toggle } = useTheme()
   const {
     user, loading: authLoading,
     signInWithEmail, signUpWithEmail, signInWithGoogle, signInWithGithub, signOut
@@ -53,7 +55,7 @@ export function Home() {
 
           <div className="flex items-center gap-4">
             {tokens && (
-              <div className="flex items-center gap-2 text-xs text-text-dim">
+              <div className="hidden sm:flex items-center gap-2 text-xs text-text-dim">
                 {cached && (
                   <span className="px-2 py-0.5 bg-warning/10 text-warning rounded text-xs">
                     Cached
@@ -64,6 +66,14 @@ export function Home() {
                 <span>Confidence: {Math.round((tokens.metadata.confidence || 0) * 100)}%</span>
               </div>
             )}
+
+            <button
+              onClick={toggle}
+              className="p-2 text-text-dim hover:text-text transition-colors cursor-pointer"
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
 
             {/* Auth */}
             {!authLoading && (
@@ -105,7 +115,7 @@ export function Home() {
         {(status === 'idle' || status === 'failed') && (
           <div className="flex flex-col items-center gap-8">
             <div className="text-center space-y-3">
-              <h1 className="text-4xl font-bold text-text">
+              <h1 className="text-2xl sm:text-4xl font-bold text-text">
                 Extract design tokens from any website
               </h1>
               <p className="text-text-muted text-lg max-w-xl">
@@ -148,13 +158,13 @@ export function Home() {
         )}
 
         {/* Loading */}
-        {status === 'processing' && <Loading />}
+        {status === 'processing' && <Loading stage={stage} />}
 
         {/* Results */}
         {status === 'complete' && tokens && (
           <div className="space-y-8">
             {/* Source info */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-text">Extraction Results</h2>
                 <p className="text-sm text-text-muted mt-1">
@@ -201,7 +211,7 @@ export function Home() {
             </div>
 
             {/* Result tabs */}
-            <div className="flex gap-1 bg-bg-elevated rounded-lg p-1 border border-border w-fit">
+            <div className="flex gap-1 bg-bg-elevated rounded-lg p-1 border border-border w-full sm:w-fit overflow-x-auto">
               {tabs.map(({ value, label, icon: Icon }) => (
                 <button
                   key={value}
@@ -213,7 +223,7 @@ export function Home() {
                     }`}
                 >
                   <Icon size={16} />
-                  {label}
+                  <span className="hidden sm:inline">{label}</span>
                 </button>
               ))}
             </div>

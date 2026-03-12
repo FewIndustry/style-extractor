@@ -11,6 +11,32 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
 );
 
+// Simple in-memory rate limiter (per instance)
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT = 30; // requests per window
+const RATE_WINDOW = 60_000; // 1 minute
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_WINDOW });
+    return true;
+  }
+
+  entry.count++;
+  return entry.count <= RATE_LIMIT;
+}
+
+// Clean up old entries periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of rateLimitMap) {
+    if (now > entry.resetAt) rateLimitMap.delete(ip);
+  }
+}, 60_000);
+
 async function hashUrl(url: string): Promise<string> {
   const data = new TextEncoder().encode(url.toLowerCase().replace(/\/+$/, ""));
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
@@ -23,6 +49,16 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
+
+  const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  if (!checkRateLimit(clientIp)) {
+    return new Response(
+      JSON.stringify({ error: "Rate limit exceeded. Try again in a minute." }),
+      { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  const startTime = Date.now();
 
   try {
     const { url, skipCache } = await req.json();
@@ -82,6 +118,14 @@ Deno.serve(async (req) => {
         .single();
 
       if (cached) {
+        // Fire-and-forget telemetry for cache hit
+        supabase.from("telemetry").insert({
+          event_type: "extraction",
+          source_domain: parsed.hostname,
+          cached: true,
+          duration_ms: Date.now() - startTime,
+        }).catch(() => {});
+
         return new Response(
           JSON.stringify({
             cached: true,
@@ -174,6 +218,15 @@ Deno.serve(async (req) => {
     while ((styleMatch = styleRegex.exec(html)) !== null) {
       cssContents.push(styleMatch[1]);
     }
+
+    // Fire-and-forget telemetry for fresh extraction
+    supabase.from("telemetry").insert({
+      event_type: "extraction",
+      source_domain: parsed.hostname,
+      cached: false,
+      duration_ms: Date.now() - startTime,
+      color_count: cssContents.length,
+    }).catch(() => {});
 
     return new Response(
       JSON.stringify({

@@ -12,7 +12,7 @@ export function TypographyPreview({ typography }: TypographyPreviewProps) {
       <Card title="Font Families">
         <div className="space-y-4">
           {typography.fonts.map((font) => (
-            <div key={font.family} className="flex items-baseline justify-between gap-4">
+            <div key={font.family} className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-2 sm:gap-4">
               <div>
                 <p
                   className="text-2xl text-text"
@@ -26,7 +26,7 @@ export function TypographyPreview({ typography }: TypographyPreviewProps) {
                 </p>
               </div>
               <p
-                className="text-sm text-text-muted shrink-0"
+                className="hidden sm:block text-sm text-text-muted shrink-0"
                 style={{ fontFamily: font.family }}
               >
                 Aa Bb Cc 123
