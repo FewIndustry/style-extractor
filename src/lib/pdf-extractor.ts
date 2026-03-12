@@ -1,4 +1,5 @@
 import * as pdfjsLib from 'pdfjs-dist'
+import { OPS } from 'pdfjs-dist'
 import type { RawExtractionData, RawColorData, RawFontData } from '@extractor/types'
 
 // Use the bundled worker — import directly so Vite can resolve it
@@ -56,10 +57,7 @@ export async function extractPdf(file: File): Promise<RawExtractionData> {
       const fn = opList.fnArray[j]
       const args = opList.argsArray[j]
 
-      // OPS.setFillRGBColor = 31, OPS.setStrokeRGBColor = 33
-      // OPS.setFillGray = 35, OPS.setStrokeGray = 37
-      // OPS.setFillCMYKColor = 39, OPS.setStrokeCMYKColor = 41
-      if (fn === 31 || fn === 33) {
+      if (fn === OPS.setFillRGBColor || fn === OPS.setStrokeRGBColor) {
         // RGB color: args = [r, g, b] in 0-1 range
         if (args && args.length >= 3) {
           const hex = rgbToHex(
@@ -69,14 +67,14 @@ export async function extractPdf(file: File): Promise<RawExtractionData> {
           )
           colorCount.set(hex, (colorCount.get(hex) || 0) + 1)
         }
-      } else if (fn === 35 || fn === 37) {
+      } else if (fn === OPS.setFillGray || fn === OPS.setStrokeGray) {
         // Grayscale: args = [gray] in 0-1 range
         if (args && args.length >= 1) {
           const v = Math.round(args[0] * 255)
           const hex = rgbToHex(v, v, v)
           colorCount.set(hex, (colorCount.get(hex) || 0) + 1)
         }
-      } else if (fn === 39 || fn === 41) {
+      } else if (fn === OPS.setFillCMYKColor || fn === OPS.setStrokeCMYKColor) {
         // CMYK: args = [c, m, y, k] in 0-1 range
         if (args && args.length >= 4) {
           const [c, m, y, k] = args
