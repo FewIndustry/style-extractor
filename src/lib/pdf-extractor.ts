@@ -12,9 +12,23 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
  */
 export async function extractPdf(file: File): Promise<RawExtractionData> {
   const arrayBuffer = await file.arrayBuffer()
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
 
-  const colors: RawColorData[] = []
+  let pdf: pdfjsLib.PDFDocumentProxy
+  try {
+    pdf = await pdfjsLib.getDocument({
+      data: new Uint8Array(arrayBuffer),
+      useSystemFonts: true,
+    }).promise
+  } catch (err) {
+    // If worker-based loading fails, retry with worker disabled
+    pdfjsLib.GlobalWorkerOptions.workerSrc = ''
+    pdf = await pdfjsLib.getDocument({
+      data: new Uint8Array(arrayBuffer),
+      useSystemFonts: true,
+      isEvalSupported: false,
+    }).promise
+  }
+
   const colorCount = new Map<string, number>()
   const fontMap = new Map<string, RawFontData>()
 
@@ -22,73 +36,84 @@ export async function extractPdf(file: File): Promise<RawExtractionData> {
   const pageCount = Math.min(pdf.numPages, 20)
 
   for (let i = 1; i <= pageCount; i++) {
-    const page = await pdf.getPage(i)
+    try {
+      const page = await pdf.getPage(i)
 
-    // --- Extract text content for fonts ---
-    const textContent = await page.getTextContent()
-    const items = textContent.items ?? []
-    for (let idx = 0; idx < items.length; idx++) {
-      const item = items[idx]
-      if (!item || !('str' in item) || !item.str.trim()) continue
+      // --- Extract text content for fonts ---
+      try {
+        const textContent = await page.getTextContent()
+        const items = textContent.items ?? []
+        for (let idx = 0; idx < items.length; idx++) {
+          const item = items[idx]
+          if (!item || !('str' in item) || !item.str.trim()) continue
 
-      const fontName = item.fontName || 'unknown'
-      // Height approximates font size in PDF points
-      const height = item.height || item.transform?.[3] || 12
-      const fontSize = `${Math.round(Math.abs(height))}px`
+          const fontName = item.fontName || 'unknown'
+          const height = item.height || item.transform?.[3] || 12
+          const fontSize = `${Math.round(Math.abs(height))}px`
 
-      const key = `${fontName}::${fontSize}`
-      if (fontMap.has(key)) {
-        fontMap.get(key)!.charCount += item.str.length
-      } else {
-        fontMap.set(key, {
-          family: cleanPdfFontName(fontName),
-          size: fontSize,
-          weight: fontName.toLowerCase().includes('bold') ? 700 : 400,
-          lineHeight: '1.2',
-          element: 'unknown',
-          charCount: item.str.length,
-        })
+          const key = `${fontName}::${fontSize}`
+          if (fontMap.has(key)) {
+            fontMap.get(key)!.charCount += item.str.length
+          } else {
+            fontMap.set(key, {
+              family: cleanPdfFontName(fontName),
+              size: fontSize,
+              weight: fontName.toLowerCase().includes('bold') ? 700 : 400,
+              lineHeight: '1.2',
+              element: 'unknown',
+              charCount: item.str.length,
+            })
+          }
+        }
+      } catch {
+        // Skip text extraction for this page if it fails
       }
-    }
 
-    // --- Extract colors from page operators ---
-    const opList = await page.getOperatorList()
-    for (let j = 0; j < opList.fnArray.length; j++) {
-      const fn = opList.fnArray[j]
-      const args = opList.argsArray[j]
+      // --- Extract colors from page operators ---
+      try {
+        const opList = await page.getOperatorList()
+        const fnArray = opList.fnArray
+        const argsArray = opList.argsArray
+        for (let j = 0; j < fnArray.length; j++) {
+          const fn = fnArray[j]
+          const args = argsArray[j]
 
-      if (fn === OPS.setFillRGBColor || fn === OPS.setStrokeRGBColor) {
-        // RGB color: args = [r, g, b] in 0-1 range
-        if (args && args.length >= 3) {
-          const hex = rgbToHex(
-            Math.round(args[0] * 255),
-            Math.round(args[1] * 255),
-            Math.round(args[2] * 255)
-          )
-          colorCount.set(hex, (colorCount.get(hex) || 0) + 1)
+          if (fn === OPS.setFillRGBColor || fn === OPS.setStrokeRGBColor) {
+            if (args && args.length >= 3) {
+              const hex = rgbToHex(
+                Math.round(args[0] * 255),
+                Math.round(args[1] * 255),
+                Math.round(args[2] * 255)
+              )
+              colorCount.set(hex, (colorCount.get(hex) || 0) + 1)
+            }
+          } else if (fn === OPS.setFillGray || fn === OPS.setStrokeGray) {
+            if (args && args.length >= 1) {
+              const v = Math.round(args[0] * 255)
+              const hex = rgbToHex(v, v, v)
+              colorCount.set(hex, (colorCount.get(hex) || 0) + 1)
+            }
+          } else if (fn === OPS.setFillCMYKColor || fn === OPS.setStrokeCMYKColor) {
+            if (args && args.length >= 4) {
+              const c = args[0], m = args[1], y = args[2], k = args[3]
+              const r = Math.round(255 * (1 - c) * (1 - k))
+              const g = Math.round(255 * (1 - m) * (1 - k))
+              const b = Math.round(255 * (1 - y) * (1 - k))
+              const hex = rgbToHex(r, g, b)
+              colorCount.set(hex, (colorCount.get(hex) || 0) + 1)
+            }
+          }
         }
-      } else if (fn === OPS.setFillGray || fn === OPS.setStrokeGray) {
-        // Grayscale: args = [gray] in 0-1 range
-        if (args && args.length >= 1) {
-          const v = Math.round(args[0] * 255)
-          const hex = rgbToHex(v, v, v)
-          colorCount.set(hex, (colorCount.get(hex) || 0) + 1)
-        }
-      } else if (fn === OPS.setFillCMYKColor || fn === OPS.setStrokeCMYKColor) {
-        // CMYK: args = [c, m, y, k] in 0-1 range
-        if (args && args.length >= 4) {
-          const [c, m, y, k] = args
-          const r = Math.round(255 * (1 - c) * (1 - k))
-          const g = Math.round(255 * (1 - m) * (1 - k))
-          const b = Math.round(255 * (1 - y) * (1 - k))
-          const hex = rgbToHex(r, g, b)
-          colorCount.set(hex, (colorCount.get(hex) || 0) + 1)
-        }
+      } catch {
+        // Skip operator extraction for this page if it fails
       }
+    } catch {
+      // Skip entire page if getPage fails
     }
   }
 
   // Convert maps to arrays
+  const colors: RawColorData[] = []
   colorCount.forEach((count, hex) => {
     colors.push({ value: hex, property: 'unknown', selector: '', count })
   })
@@ -117,11 +142,8 @@ function rgbToHex(r: number, g: number, b: number): string {
  * Clean up PDF internal font names like "BCDEEE+Arial-BoldMT" → "Arial"
  */
 function cleanPdfFontName(name: string): string {
-  // Remove subset prefix (e.g., "BCDEEE+")
   let clean = name.replace(/^[A-Z]{6}\+/, '')
-  // Remove style suffixes
   clean = clean.replace(/-(Bold|Italic|BoldItalic|Regular|Medium|Light|Thin|Black|SemiBold|ExtraBold|ExtraLight)?(MT|PS|IT)?$/i, '')
-  // Common substitutions
   clean = clean.replace(/TimesNewRoman/i, 'Times New Roman')
   clean = clean.replace(/ArialMT/i, 'Arial')
   clean = clean.replace(/CourierNew/i, 'Courier New')
